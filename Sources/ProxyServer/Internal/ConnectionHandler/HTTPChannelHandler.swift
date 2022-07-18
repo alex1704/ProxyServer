@@ -20,7 +20,7 @@ final class HTTPChannelHandler<ChannelHandler: ChannelDuplexHandler & RemovableC
 
     private var state: State
     private var logger: Logger
-    private let channelHandler: ChannelHandler
+    private weak var channelHandler: ChannelHandler?
     private var bufferedBody: ByteBuffer?
     private var bufferedEnd: HTTPHeaders?
 }
@@ -37,6 +37,7 @@ extension HTTPChannelHandler: ChannelCallbackHandler {}
 
 extension HTTPChannelHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard let channelHandler = channelHandler else { return }
         let unwrapped = channelHandler.unwrapInboundIn(data)
         switch state {
         case .idle:
@@ -49,6 +50,7 @@ extension HTTPChannelHandler {
 
 extension HTTPChannelHandler {
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        guard let channelHandler = channelHandler else { return }
         switch channelHandler.unwrapOutboundIn(data) {
         case .head(let head):
             context.write(channelHandler.wrapOutboundOut(.head(head)), promise: nil)
@@ -67,6 +69,7 @@ extension HTTPChannelHandler: RemovableChannelHandler {
     }
 
     private func removeHandler(context: ChannelHandlerContext) {
+        guard let channelHandler = channelHandler else { return }
         if case let .pendingConnection(head) = self.state {
             self.state = .connected
 
@@ -164,6 +167,7 @@ private extension HTTPChannelHandler {
         of request: HTTPServerRequestPart,
         in context: ChannelHandlerContext
     ) {
+        guard let channelHandler = channelHandler else { return }
         switch request {
         case .body(let buffer):
             switch state {
@@ -192,6 +196,7 @@ private extension HTTPChannelHandler {
     }
 
     private func httpErrorAndClose(context: ChannelHandlerContext) {
+        guard let channelHandler = channelHandler else { return }
         let headers = HTTPHeaders([("Content-Length", "0"), ("Connection", "close")])
         let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: .badRequest, headers: headers)
         context.write(channelHandler.wrapOutboundOut(.head(head)), promise: nil)

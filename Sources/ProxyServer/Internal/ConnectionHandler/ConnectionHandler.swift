@@ -87,7 +87,6 @@ private extension ConnectionHandler {
         self.logger.info(">> \(head.method) \(head.uri) \(head.version)")
 
         if head.method == .CONNECT {
-            // TODO: weak dependency?
             callBackHandler = TLSChannelHandler(channelHandler: self)
         } else {
             callBackHandler = HTTPChannelHandler(channelHandler: self)

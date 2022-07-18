@@ -21,7 +21,7 @@ where ChannelHandler.InboundIn == HTTPServerRequestPart, ChannelHandler.Outbound
     }
 
     private var upgradeState: State
-    private let channelHandler: ChannelHandler
+    private weak var channelHandler: ChannelHandler?
     private var logger: Logger
 }
 
@@ -40,6 +40,8 @@ extension TLSChannelHandler: ChannelCallbackHandler {}
 
 extension TLSChannelHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard let channelHandler = channelHandler else { return }
+
         switch self.upgradeState {
         case .idle:
             self.handleInitialMessage(context: context, data: channelHandler.unwrapInboundIn(data))
@@ -194,6 +196,7 @@ private extension TLSChannelHandler {
         // Ok, upgrade has completed! We now need to begin the upgrade process.
         // First, send the 200 message.
         // This content-length header is MUST NOT, but we need to workaround NIO's insistence that we set one.
+        guard let channelHandler = channelHandler else { return }
         let headers = HTTPHeaders([("Content-Length", "0")])
         let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: .ok, headers: headers)
         context.write(channelHandler.wrapOutboundOut(.head(head)), promise: nil)
@@ -207,7 +210,7 @@ private extension TLSChannelHandler {
         context.channel.pipeline.addHandler(localGlue).and(peerChannel.pipeline.addHandler(peerGlue)).whenComplete { result in
             switch result {
             case .success(_):
-                context.pipeline.removeHandler(self.channelHandler, promise: nil)
+                context.pipeline.removeHandler(channelHandler, promise: nil)
             case .failure(_):
                 // Close connected peer channel before closing our channel.
                 peerChannel.close(mode: .all, promise: nil)
@@ -218,6 +221,7 @@ private extension TLSChannelHandler {
 
     private func httpErrorAndClose(context: ChannelHandlerContext) {
         self.upgradeState = .upgradeFailed
+        guard let channelHandler = channelHandler else { return }
 
         let headers = HTTPHeaders([("Content-Length", "0"), ("Connection", "close")])
         let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: .badRequest, headers: headers)
