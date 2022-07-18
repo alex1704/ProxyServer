@@ -9,6 +9,7 @@ import Foundation
 import NIO
 import NIOHTTP1
 import Logging
+import Combine
 
 protocol ChannelCallbackHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny)
@@ -30,11 +31,13 @@ extension ChannelCallbackHandler {
 }
 
 final class ConnectionHandler {
-    init(logger: Logger = .init(label: "ConnectionHandler")) {
+    init(requestSubject: PassthroughSubject<Request, Never>?, logger: Logger = .init(label: "ConnectionHandler")) {
         self.logger = logger
+        self.requestSubject = requestSubject
     }
 
     private var logger: Logger
+    private weak var requestSubject: PassthroughSubject<Request, Never>?
     private var callBackHandler: ChannelCallbackHandler?
 }
 
@@ -75,18 +78,15 @@ extension ConnectionHandler: RemovableChannelHandler {
 }
 
 private extension ConnectionHandler {
-    private func isTLSConnection(context: ChannelHandlerContext, data: InboundIn) throws -> Bool  {
+    private func setupCallBackHandler(context: ChannelHandlerContext, data: InboundIn) throws {
         guard case .head(let head) = data else {
             throw ConnectProxyError.invalidHTTPMessage
         }
 
+        requestSubject?.send(Request(method: head.method.rawValue, uri: head.uri))
         self.logger.info(">> \(head.method) \(head.uri) \(head.version)")
 
-        return head.method == .CONNECT
-    }
-
-    private func setupCallBackHandler(context: ChannelHandlerContext, data: InboundIn) throws {
-        if try isTLSConnection(context: context, data: data) {
+        if head.method == .CONNECT {
             // TODO: weak dependency?
             callBackHandler = TLSChannelHandler(channelHandler: self)
         } else {

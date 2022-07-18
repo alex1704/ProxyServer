@@ -13,10 +13,23 @@
 //===----------------------------------------------------------------------===//
 
 import Dispatch
+import Logging
 import ProxyServer
+import Combine
 
 let proxy = ProxyServer()
-proxy.start(ipAddress: "127.0.0.1", port: 8080)
+let logger = Logger(label: "main")
+let cancellable = proxy.requestPublisher.sink { request in
+    logger.info("\(request)")
+}
+
+Task {
+    do {
+        try await proxy.start(ipAddress: "127.0.0.1", port: 8080)
+    } catch {
+        logger.info("\(error)")
+    }
+}
 
 // Run forever
 dispatchMain()

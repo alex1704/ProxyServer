@@ -18,8 +18,8 @@ import PackageDescription
 let package = Package(
     name: "ProxyServer",
     platforms: [
-            .macOS(.v10_14),
-            .iOS(.v14)
+            .macOS(.v10_15),
+            .iOS(.v13)
         ],
     products: [
         .library(name: "ProxyServer", targets: ["ProxyServer"]),
