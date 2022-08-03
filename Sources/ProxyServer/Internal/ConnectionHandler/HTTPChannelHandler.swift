@@ -21,8 +21,8 @@ final class HTTPChannelHandler<ChannelHandler: ChannelDuplexHandler & RemovableC
     private var state: State
     private var logger: Logger
     private weak var channelHandler: ChannelHandler?
-    private var bufferedBody: ByteBuffer?
     private var bufferedEnd: HTTPHeaders?
+    private var request = ProxyServer.MiTM.Request(url: "", method: "", payload: .init())
 }
 
 private extension HTTPChannelHandler {
@@ -75,9 +75,9 @@ extension HTTPChannelHandler: RemovableChannelHandler {
 
             context.fireChannelRead(channelHandler.wrapInboundOut(.head(head)))
 
-            if let bufferedBody = self.bufferedBody {
-                context.fireChannelRead(channelHandler.wrapInboundOut(.body(.byteBuffer(bufferedBody))))
-                self.bufferedBody = nil
+            if request.payload.body.count > 0 {
+                let buffer = ByteBuffer(string: request.payload.body)
+                context.fireChannelRead(channelHandler.wrapInboundOut(.body(.byteBuffer(buffer))))
             }
 
             if let bufferedEnd = self.bufferedEnd {
@@ -102,7 +102,7 @@ private extension HTTPChannelHandler {
             .connect(host: host, port: port)
 
         channelFuture.whenSuccess { channel in
-            self.logger.info("Connected to \(String(describing: channel.remoteAddress?.ipAddress ?? "unknown")); state \(self.state)")
+            self.logger.info("Connected to \(String(describing: channel.remoteAddress?.ipAddress ?? "unknown"))")
             self.glue(channel, context: context)
         }
         channelFuture.whenFailure { error in
@@ -122,6 +122,9 @@ private extension HTTPChannelHandler {
     private func glue(_ peerChannel: Channel, context: ChannelHandlerContext) {
         // Now we need to glue our channel and the peer channel together.
         let (localGlue, peerGlue) = GlueHandler.matchedPair()
+        peerGlue.didFinish = { response in
+            RequestInfoNotificationEmitter(info: (self.request, response), sender: self).emit()
+        }
         context.channel.pipeline.addHandler(localGlue).and(peerChannel.pipeline.addHandler(peerGlue)).whenComplete { result in
             switch result {
             case .success(_):
@@ -153,6 +156,12 @@ private extension HTTPChannelHandler {
             return
         }
 
+        request.url = url.absoluteString
+        request.method = head.method.rawValue
+        request.payload.headers = head.headers.reduce(into: [String: String](), { result, pair in
+            result[pair.name] = pair.value
+        })
+
         if let query = url.query {
             head.uri = "\(url.path)?\(query)"
         } else {
@@ -174,7 +183,7 @@ private extension HTTPChannelHandler {
             case .connected:
                 context.fireChannelRead(channelHandler.wrapInboundOut(.body(.byteBuffer(buffer))))
             case .pendingConnection(_):
-                self.bufferedBody = buffer
+                self.request.payload.body += String(buffer: buffer)
             default:
                 break
             }

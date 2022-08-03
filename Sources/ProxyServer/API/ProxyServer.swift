@@ -9,12 +9,6 @@ import Foundation
 import NIO
 import NIOHTTP1
 import Logging
-import Combine
-
-public struct Request {
-    public let method: String
-    public let uri: String
-}
 
 public final class ProxyServer {
     public init() {
@@ -22,10 +16,10 @@ public final class ProxyServer {
         serverBootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.socket(SOL_SOCKET, SO_REUSEADDR), value: 1)
             .childChannelOption(ChannelOptions.socket(SOL_SOCKET, SO_REUSEADDR), value: 1)
-            .childChannelInitializer { [weak self] channel in
+            .childChannelInitializer { channel in
                 channel.pipeline.addHandler(ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)))
                     .flatMap { channel.pipeline.addHandler(HTTPResponseEncoder()) }
-                    .flatMap { channel.pipeline.addHandler( ConnectionHandler(requestSubject: self?.requestSubject)) }
+                    .flatMap { channel.pipeline.addHandler( ConnectionHandler()) }
             }
     }
 
@@ -63,13 +57,6 @@ public final class ProxyServer {
         }
     }
 
-    private let requestSubject = PassthroughSubject<Request, Never>()
     private var serverBootstrap: ServerBootstrap?
     private weak var channel: Channel?
-}
-
-public extension ProxyServer {
-    var requestPublisher: AnyPublisher<Request, Never> {
-        requestSubject.eraseToAnyPublisher()
-    }
 }

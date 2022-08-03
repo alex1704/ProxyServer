@@ -13,8 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 import NIO
+import NIOHTTP1
 
 final class GlueHandler {
+
+    var didFinish: ((ProxyServer.MiTM.Response) -> Void)?
 
     private var partner: GlueHandler?
 
@@ -23,6 +26,9 @@ final class GlueHandler {
     private var pendingRead: Bool = false
 
     private init() { }
+
+    private var response = ProxyServer.MiTM.Response(statusCode: 200, payload: .init())
+    private var isPeer = false
 }
 
 
@@ -33,6 +39,7 @@ extension GlueHandler {
 
         first.partner = second
         second.partner = first
+        second.isPeer = true
 
         return (first, second)
     }
@@ -84,6 +91,21 @@ extension GlueHandler: ChannelDuplexHandler {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        if let buffer = context.channel._channelCore.tryUnwrapData(data, as: ByteBuffer.self) {
+            response.payload.body += String(buffer: buffer)
+        } else if let responsePart = context.channel._channelCore.tryUnwrapData(data, as: HTTPClientResponsePart.self) {
+            switch responsePart {
+            case .head(let head):
+                self.response.statusCode = head.status.code
+                let newHeaders = head.headers.map { ($0.name, $0.value) }
+                self.response.payload.headers.merge(newHeaders) { (_, new) in new }
+            case .body(let body):
+                self.response.payload.body += String(buffer: body)
+            case .end(_):
+                break
+            }
+        }
+
         self.partner?.partnerWrite(data)
     }
 
@@ -93,6 +115,10 @@ extension GlueHandler: ChannelDuplexHandler {
 
     func channelInactive(context: ChannelHandlerContext) {
         self.partner?.partnerCloseFull()
+
+        if isPeer {
+            didFinish?(response)
+        }
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {

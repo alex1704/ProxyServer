@@ -31,13 +31,11 @@ extension ChannelCallbackHandler {
 }
 
 final class ConnectionHandler {
-    init(requestSubject: PassthroughSubject<Request, Never>?, logger: Logger = .init(label: "ConnectionHandler")) {
+    init(logger: Logger = .init(label: "ConnectionHandler")) {
         self.logger = logger
-        self.requestSubject = requestSubject
     }
 
     private var logger: Logger
-    private weak var requestSubject: PassthroughSubject<Request, Never>?
     private var callBackHandler: ChannelCallbackHandler?
 }
 
@@ -83,7 +81,6 @@ private extension ConnectionHandler {
             throw ConnectProxyError.invalidHTTPMessage
         }
 
-        requestSubject?.send(Request(method: head.method.rawValue, uri: head.uri))
         self.logger.info(">> \(head.method) \(head.uri) \(head.version)")
 
         if head.method == .CONNECT {

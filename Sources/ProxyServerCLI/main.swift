@@ -16,12 +16,20 @@ import Dispatch
 import Logging
 import ProxyServer
 import Combine
+import Foundation
 
 let proxy = ProxyServer()
 let logger = Logger(label: "main")
-let cancellable = proxy.requestPublisher.sink { request in
-    logger.info("\(request)")
-}
+let cancellable = NotificationCenter.default
+    .publisher(for: ProxyServer.Notification.DidEmitRequestInfo)
+    .sink { notification in
+        let key = ProxyServer.Notification.requestInfoKey
+        guard let info = notification.userInfo?[key] as? ProxyServer.MiTM.RequestInfo else {
+            return
+        }
+
+        logger.info("\(info.request.url) \(info.response.statusCode) body length: \(info.response.payload.body.count)")
+    }
 
 Task {
     do {

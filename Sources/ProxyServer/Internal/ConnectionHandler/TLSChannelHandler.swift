@@ -23,6 +23,7 @@ where ChannelHandler.InboundIn == HTTPServerRequestPart, ChannelHandler.Outbound
     private var upgradeState: State
     private weak var channelHandler: ChannelHandler?
     private var logger: Logger
+    private var request = ProxyServer.MiTM.Request(url: "", method: "", payload: .init())
 }
 
 private extension TLSChannelHandler {
@@ -117,14 +118,13 @@ private extension TLSChannelHandler {
         }
 
         let components = head.uri.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard components.count > 1,
-              let host = components.first
-        else {
+        guard components.count > 1 else {
             self.logger.error("Invalid HTTP message uri \(head.uri)")
             self.httpErrorAndClose(context: context)
             return
         }
 
+        let host = components[0..<components.count - 1].joined(separator: ":")
         let port = components.last.flatMap { Int($0, radix: 10) } ?? 80  // Port 80 if not specified
 
         self.upgradeState = .beganConnecting
@@ -133,6 +133,8 @@ private extension TLSChannelHandler {
 
     private func connectTo(host: String, port: Int, context: ChannelHandlerContext) {
         self.logger.info("Connecting to \(host):\(port)")
+        request.method = HTTPMethod.CONNECT.rawValue
+        request.url = "https://\(host):\(port)"
 
         let channelFuture = ClientBootstrap(group: context.eventLoop)
             .connect(host: String(host), port: port)
@@ -207,6 +209,10 @@ private extension TLSChannelHandler {
 
         // Now we need to glue our channel and the peer channel together.
         let (localGlue, peerGlue) = GlueHandler.matchedPair()
+        peerGlue.didFinish = { response in
+            RequestInfoNotificationEmitter(info: (self.request, response), sender: self).emit()
+        }
+
         context.channel.pipeline.addHandler(localGlue).and(peerChannel.pipeline.addHandler(peerGlue)).whenComplete { result in
             switch result {
             case .success(_):
@@ -245,4 +251,3 @@ private extension TLSChannelHandler {
         }
     }
 }
-
