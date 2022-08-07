@@ -18,7 +18,16 @@ import ProxyServer
 import Combine
 import Foundation
 
-let proxy = ProxyServer()
+func getDocumentsDirectory() -> URL {
+    // find all possible documents directories for this user
+    let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+
+    // just send back the first one, which ought to be the only one
+    return paths[0]
+}
+
+
+let proxy = ProxyServer(httpBodyCacheFolderURL: getDocumentsDirectory())
 let logger = Logger(label: "main")
 let cancellable = NotificationCenter.default
     .publisher(for: ProxyServer.Notification.DidEmitRequestInfo)
@@ -28,7 +37,7 @@ let cancellable = NotificationCenter.default
             return
         }
 
-        logger.info("\(info.request.url) \(info.response.statusCode) body length: \(info.response.payload.body.count)")
+        logger.info("\(info.request.url) \(info.response.statusCode) \nrequest: \(info.request.payload.bodyContentURL)\nresponse: \(info.response.payload.bodyContentURL)")
     }
 
 Task {

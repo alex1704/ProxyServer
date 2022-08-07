@@ -11,19 +11,24 @@ import NIO
 import NIOHTTP1
 import Logging
 
-
 final class TLSChannelHandler<ChannelHandler: ChannelInboundHandler & RemovableChannelHandler>
 where ChannelHandler.InboundIn == HTTPServerRequestPart, ChannelHandler.OutboundOut == HTTPServerResponsePart {
-    init(channelHandler: ChannelHandler, logger: Logger = .init(label: "tls")) {
+    init(
+        channelHandler: ChannelHandler,
+        httpBodyCacheFolderURL: URL,
+        logger: Logger = .init(label: "tls")
+    ) throws {
         self.upgradeState = .idle
         self.logger = logger
         self.channelHandler = channelHandler
+        self.httpBodyCache = try HTTPBodyCache(cacheFolderURL: httpBodyCacheFolderURL)
     }
 
     private var upgradeState: State
     private weak var channelHandler: ChannelHandler?
     private var logger: Logger
     private var request = ProxyServer.MiTM.Request(url: "", method: "", payload: .init())
+    private let httpBodyCache: HTTPBodyCache
 }
 
 private extension TLSChannelHandler {
@@ -210,7 +215,19 @@ private extension TLSChannelHandler {
         // Now we need to glue our channel and the peer channel together.
         let (localGlue, peerGlue) = GlueHandler.matchedPair()
         peerGlue.didFinish = { response in
+            if self.httpBodyCache.hasRequestData {
+                self.request.payload.bodyContentURL = self.httpBodyCache.requestBodyURL
+            }
+
+            if self.httpBodyCache.hasResponseData {
+                response.payload.bodyContentURL = self.httpBodyCache.responseBodyURL
+            }
+
             RequestInfoNotificationEmitter(info: (self.request, response), sender: self).emit()
+        }
+
+        peerGlue.didReceiveBodyData = { data in
+            self.httpBodyCache.appendResponseBody(&data)
         }
 
         context.channel.pipeline.addHandler(localGlue).and(peerChannel.pipeline.addHandler(peerGlue)).whenComplete { result in

@@ -11,7 +11,7 @@ import NIOHTTP1
 import Logging
 
 public final class ProxyServer {
-    public init() {
+    public init(httpBodyCacheFolderURL: URL) {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         serverBootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.socket(SOL_SOCKET, SO_REUSEADDR), value: 1)
@@ -19,7 +19,7 @@ public final class ProxyServer {
             .childChannelInitializer { channel in
                 channel.pipeline.addHandler(ByteToMessageHandler(HTTPRequestDecoder(leftOverBytesStrategy: .forwardBytes)))
                     .flatMap { channel.pipeline.addHandler(HTTPResponseEncoder()) }
-                    .flatMap { channel.pipeline.addHandler( ConnectionHandler()) }
+                    .flatMap { channel.pipeline.addHandler( ConnectionHandler(httpBodyCacheFolderURL: httpBodyCacheFolderURL)) }
             }
     }
 

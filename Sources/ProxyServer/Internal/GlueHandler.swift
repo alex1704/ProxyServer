@@ -14,10 +14,13 @@
 
 import NIO
 import NIOHTTP1
+import NIOFoundationCompat
+import Foundation
 
 final class GlueHandler {
 
     var didFinish: ((ProxyServer.MiTM.Response) -> Void)?
+    var didReceiveBodyData: ((inout Data) -> Void)?
 
     private var partner: GlueHandler?
 
@@ -73,6 +76,12 @@ extension GlueHandler {
     private var partnerWritable: Bool {
         self.context?.channel.isWritable ?? false
     }
+
+    private func notifyReceivingData(_ buffer: inout ByteBuffer) {
+        if var data = buffer.readData(length: buffer.readableBytes, byteTransferStrategy: .noCopy) {
+            didReceiveBodyData?(&data)
+        }
+    }
 }
 
 
@@ -91,16 +100,16 @@ extension GlueHandler: ChannelDuplexHandler {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        if let buffer = context.channel._channelCore.tryUnwrapData(data, as: ByteBuffer.self) {
-            response.payload.body += String(buffer: buffer)
+        if var buffer = context.channel._channelCore.tryUnwrapData(data, as: ByteBuffer.self) {
+            notifyReceivingData(&buffer)
         } else if let responsePart = context.channel._channelCore.tryUnwrapData(data, as: HTTPClientResponsePart.self) {
             switch responsePart {
             case .head(let head):
                 self.response.statusCode = head.status.code
                 let newHeaders = head.headers.map { ($0.name, $0.value) }
                 self.response.payload.headers.merge(newHeaders) { (_, new) in new }
-            case .body(let body):
-                self.response.payload.body += String(buffer: body)
+            case .body(var body):
+                notifyReceivingData(&body)
             case .end(_):
                 break
             }

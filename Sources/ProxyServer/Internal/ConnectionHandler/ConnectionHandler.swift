@@ -31,10 +31,12 @@ extension ChannelCallbackHandler {
 }
 
 final class ConnectionHandler {
-    init(logger: Logger = .init(label: "ConnectionHandler")) {
+    init(httpBodyCacheFolderURL: URL, logger: Logger = .init(label: "ConnectionHandler")) {
+        self.httpBodyCacheFolderURL = httpBodyCacheFolderURL
         self.logger = logger
     }
 
+    private let httpBodyCacheFolderURL: URL
     private var logger: Logger
     private var callBackHandler: ChannelCallbackHandler?
 }
@@ -50,6 +52,7 @@ extension ConnectionHandler: ChannelDuplexHandler {
             do {
                 try setupCallBackHandler(context: context, data: self.unwrapInboundIn(data))
             } catch {
+                logger.error("\(error.localizedDescription)")
                 httpErrorAndClose(context: context)
                 return
             }
@@ -84,9 +87,9 @@ private extension ConnectionHandler {
         self.logger.info(">> \(head.method) \(head.uri) \(head.version)")
 
         if head.method == .CONNECT {
-            callBackHandler = TLSChannelHandler(channelHandler: self)
+            callBackHandler = try TLSChannelHandler(channelHandler: self, httpBodyCacheFolderURL: httpBodyCacheFolderURL)
         } else {
-            callBackHandler = HTTPChannelHandler(channelHandler: self)
+            callBackHandler = try HTTPChannelHandler(channelHandler: self, httpBodyCacheFolderURL: httpBodyCacheFolderURL)
         }
     }
 

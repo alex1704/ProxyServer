@@ -10,12 +10,16 @@ import NIO
 import NIOHTTP1
 import Logging
 
-
 final class HTTPChannelHandler<ChannelHandler: ChannelDuplexHandler & RemovableChannelHandler> where ChannelHandler.InboundIn == HTTPServerRequestPart, ChannelHandler.InboundOut == HTTPClientRequestPart, ChannelHandler.OutboundIn == HTTPClientResponsePart, ChannelHandler.OutboundOut == HTTPServerResponsePart {
-    init(channelHandler: ChannelHandler, logger: Logger = .init(label: "http")) {
+    init(
+        channelHandler: ChannelHandler,
+        httpBodyCacheFolderURL: URL,
+        logger: Logger = .init(label: "http")
+    ) throws {
         self.state = .idle
         self.logger = logger
         self.channelHandler = channelHandler
+        self.httpBodyCache = try HTTPBodyCache(cacheFolderURL: httpBodyCacheFolderURL)
     }
 
     private var state: State
@@ -23,6 +27,7 @@ final class HTTPChannelHandler<ChannelHandler: ChannelDuplexHandler & RemovableC
     private weak var channelHandler: ChannelHandler?
     private var bufferedEnd: HTTPHeaders?
     private var request = ProxyServer.MiTM.Request(url: "", method: "", payload: .init())
+    private let httpBodyCache: HTTPBodyCache
 }
 
 private extension HTTPChannelHandler {
@@ -75,10 +80,7 @@ extension HTTPChannelHandler: RemovableChannelHandler {
 
             context.fireChannelRead(channelHandler.wrapInboundOut(.head(head)))
 
-            if request.payload.body.count > 0 {
-                let buffer = ByteBuffer(string: request.payload.body)
-                context.fireChannelRead(channelHandler.wrapInboundOut(.body(.byteBuffer(buffer))))
-            }
+            fireChannelRequestBody(in: context)
 
             if let bufferedEnd = self.bufferedEnd {
                 context.fireChannelRead(channelHandler.wrapInboundOut(.end(bufferedEnd)))
@@ -87,6 +89,31 @@ extension HTTPChannelHandler: RemovableChannelHandler {
 
             context.fireChannelReadComplete()
         }
+    }
+
+    private func fireChannelRequestBody(in context: ChannelHandlerContext) {
+        guard httpBodyCache.hasRequestData,
+              let stream = InputStream(url: httpBodyCache.requestBodyURL),
+              let channelHandler = channelHandler
+        else {
+            return
+        }
+
+        stream.open()
+
+        guard stream.hasBytesAvailable else { return }
+
+        let bufferSize = 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            let data = Data(bytes: buffer, count: read)
+            let wrapped = channelHandler.wrapInboundOut(.body(.byteBuffer(ByteBuffer(data: data))))
+            context.fireChannelRead(wrapped)
+        }
+        buffer.deallocate()
+
+        stream.close()
     }
 }
 
@@ -123,8 +150,21 @@ private extension HTTPChannelHandler {
         // Now we need to glue our channel and the peer channel together.
         let (localGlue, peerGlue) = GlueHandler.matchedPair()
         peerGlue.didFinish = { response in
+            if self.httpBodyCache.hasRequestData {
+                self.request.payload.bodyContentURL = self.httpBodyCache.requestBodyURL
+            }
+
+            if self.httpBodyCache.hasResponseData {
+                response.payload.bodyContentURL = self.httpBodyCache.responseBodyURL
+            }
+
             RequestInfoNotificationEmitter(info: (self.request, response), sender: self).emit()
         }
+
+        peerGlue.didReceiveBodyData = { data in
+            self.httpBodyCache.appendResponseBody(&data)
+        }
+
         context.channel.pipeline.addHandler(localGlue).and(peerChannel.pipeline.addHandler(peerGlue)).whenComplete { result in
             switch result {
             case .success(_):
@@ -183,7 +223,8 @@ private extension HTTPChannelHandler {
             case .connected:
                 context.fireChannelRead(channelHandler.wrapInboundOut(.body(.byteBuffer(buffer))))
             case .pendingConnection(_):
-                self.request.payload.body += String(buffer: buffer)
+                var data = Data(buffer: buffer)
+                self.httpBodyCache.appendRequestBody(&data)
             default:
                 break
             }
